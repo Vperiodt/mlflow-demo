@@ -1,0 +1,10 @@
+feast[redis]
+dask[dataframe]
+mlflow
+pandas
+pyarrow
+torch
+scikit-learn
+fastapi
+uvicorn
+pyyaml

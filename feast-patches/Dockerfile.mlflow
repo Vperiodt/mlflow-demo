@@ -1,0 +1,31 @@
+FROM python:3.11-slim
+
+RUN pip install --no-cache-dir \
+    "feast[redis]>=0.35.0" \
+    "mlflow>=2.10.0" \
+    "uvicorn>=0.23.0" \
+    "fastapi>=0.100.0"
+
+# Overlay our modified source files on the installed Feast package
+COPY sdk/python/feast/repo_config.py /usr/local/lib/python3.11/site-packages/feast/repo_config.py
+COPY sdk/python/feast/feature_store.py /usr/local/lib/python3.11/site-packages/feast/feature_store.py
+COPY sdk/python/feast/offline_server.py /usr/local/lib/python3.11/site-packages/feast/offline_server.py
+COPY sdk/python/feast/registry_server.py /usr/local/lib/python3.11/site-packages/feast/registry_server.py
+COPY sdk/python/feast/infra/registry/base_registry.py /usr/local/lib/python3.11/site-packages/feast/infra/registry/base_registry.py
+COPY sdk/python/feast/infra/registry/registry.py /usr/local/lib/python3.11/site-packages/feast/infra/registry/registry.py
+COPY sdk/python/feast/lineage/registry_lineage.py /usr/local/lib/python3.11/site-packages/feast/lineage/registry_lineage.py
+
+# Overlay compiled proto outputs
+COPY sdk/python/feast/protos/feast/core/Registry_pb2.py /usr/local/lib/python3.11/site-packages/feast/protos/feast/core/Registry_pb2.py
+COPY sdk/python/feast/protos/feast/core/Registry_pb2.pyi /usr/local/lib/python3.11/site-packages/feast/protos/feast/core/Registry_pb2.pyi
+COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2.py /usr/local/lib/python3.11/site-packages/feast/protos/feast/registry/RegistryServer_pb2.py
+COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2.pyi /usr/local/lib/python3.11/site-packages/feast/protos/feast/registry/RegistryServer_pb2.pyi
+COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2_grpc.py /usr/local/lib/python3.11/site-packages/feast/protos/feast/registry/RegistryServer_pb2_grpc.py
+
+# Copy our new mlflow_integration package
+COPY sdk/python/feast/mlflow_integration/ /usr/local/lib/python3.11/site-packages/feast/mlflow_integration/
+
+# Copy the custom lineage page
+COPY lineage_ui/ /opt/feast-lineage-ui/
+
+WORKDIR /feature_repo

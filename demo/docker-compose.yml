@@ -1,0 +1,76 @@
+x-feast: &feast-defaults
+  image: feast-mlflow:dev
+  volumes:
+    - ./feast_repo_server:/feature_repo
+    - ./data:/data
+  depends_on:
+    redis:
+      condition: service_healthy
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      retries: 5
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri sqlite:///mlflow.db
+      --artifacts-destination /mlflow/artifacts
+      --default-artifact-root mlflow-artifacts:/
+      --serve-artifacts
+    volumes:
+      - mlflow-data:/mlflow
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  registry-server:
+    <<: *feast-defaults
+    container_name: feast-registry
+    command: feast -c /feature_repo serve_registry
+    ports:
+      - "6570:6570"
+
+  offline-server:
+    <<: *feast-defaults
+    container_name: feast-offline
+    command: feast -c /feature_repo serve_offline -h 0.0.0.0
+    ports:
+      - "8815:8815"
+
+  online-server:
+    <<: *feast-defaults
+    container_name: feast-online
+    command: feast -c /feature_repo serve -h 0.0.0.0
+    ports:
+      - "6566:6566"
+
+  feast-ui:
+    <<: *feast-defaults
+    container_name: feast-ui
+    command: feast -c /feature_repo ui -h 0.0.0.0 -p 8888
+    ports:
+      - "8888:8888"
+
+  lineage-ui:
+    image: python:3.11-slim
+    container_name: feast-lineage-ui
+    command: python -m http.server 9090 --directory /ui
+    volumes:
+      - ../feast-src/lineage_ui:/ui:ro
+    ports:
+      - "9090:9090"
+
+volumes:
+  mlflow-data:

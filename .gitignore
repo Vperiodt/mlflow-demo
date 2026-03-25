@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Virtual environments
+.venv/
+venv/
+
+# Feast runtime data
+data/
+*.db
+registry.db
+
+# MLflow runtime data
+mlflow.db
+mlruns/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Exclude the full Feast clone -- only tracked files live in feast-patches/
+feast-src/
