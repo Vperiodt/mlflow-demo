@@ -1,149 +1,174 @@
-# Feast + MLflow: Bidirectional Native Integration
+# Feast + MLflow: Native Integration
 
-**Zero new APIs. Zero code changes. Just config.**
+## The Problem
 
-Native, bidirectional integration between [Feast](https://feast.dev) feature stores and [MLflow](https://mlflow.org) experiment tracking — both at training and inference time.
+[Feast](https://feast.dev) manages features. [MLflow](https://mlflow.org) tracks experiments. Today they don't talk to each other. Data scientists manually copy feature metadata into MLflow tags, write glue scripts for lineage, and have no way to validate that the features a model was trained on still match what's being served.
 
-- **Feast side**: Modified Feast SDK with a native `mlflow:` config block. Training calls auto-log to MLflow. Serving calls auto-validate the FeatureContract. MLflow training runs appear as nodes in the Feast UI lineage graph.
-- **MLflow side**: `feast_mlflow` plugin package. `autolog()` patches Feast transparently. `load_model()` auto-attaches the FeatureContract. Rich HTML/Markdown artifacts render in the MLflow UI.
+Databricks solved this for their platform with `FeatureEngineeringClient`, but it requires rewriting your code and locks you into Databricks.
 
-## Architecture
+## The Solution
+
+This project makes Feast and MLflow natively aware of each other — **in both directions** — with zero code changes to training or inference scripts.
+
+**From the Feast side** (modified Feast SDK):
+- Add `mlflow:` to `feature_store.yaml` and Feast auto-logs feature metadata to MLflow
+- MLflow training runs appear as nodes in the Feast UI lineage graph
+- `get_online_features()` auto-validates that served features match the training contract
+
+**From the MLflow side** (`feast_mlflow` pip package):
+- Call `feast_mlflow.autolog()` and standard Feast calls automatically log to MLflow
+- `load_model()` auto-attaches the feature schema to the model
+- Rich HTML lineage graphs and Markdown summaries render in MLflow's artifact viewer
+
+## What the Demo Shows
+
+Run `bash scripts/demo.sh` from `demo/` and you get:
+
+**Feast UI** (http://localhost:8888) — open the Lineage page:
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Docker Compose Stack                     │
-│                                                               │
-│  ┌──────────┐  ┌───────────┐  ┌───────────┐  ┌───────────┐ │
-│  │ Registry  │  │  Offline   │  │  Online    │  │  Feast UI  │ │
-│  │  Server   │  │  Server    │  │  Server    │  │  + MLflow  │ │
-│  │  :6570    │  │  :8815     │  │  :6566     │  │  :8888     │ │
-│  └──────────┘  └───────────┘  └───────────┘  └───────────┘ │
-│  ┌──────────┐  ┌───────────┐                                 │
-│  │  Redis    │  │  MLflow    │                                │
-│  │  :6379    │  │  :5000     │                                │
-│  └──────────┘  └───────────┘                                 │
-└─────────────────────────────────────────────────────────────┘
-
-Training (client → servers):
-  get_historical_features()  →  Arrow Flight to Offline Server
-  auto-logs to MLflow:  tags, params, FeatureContract, HTML lineage, Markdown
-
-Inference (client → servers):
-  load_model()               →  auto-attaches FeatureContract from MLflow run
-  get_online_features()      →  auto-validates contract (training-serving match)
-
-Feast UI:
-  Lineage graph shows MLflow training runs as blue nodes
-  (ui_server injects training run data from MLflow into the registry proto)
+Data Source  →  Feature View  →  Feature Service  →  MLflow Run (blue node)
 ```
+
+Each MLflow run that used a feature service appears as a clickable blue node in the lineage graph. Click it to jump to the run in MLflow.
+
+**MLflow UI** (http://localhost:5000) — open any run:
+
+- **Overview**: Feast tags (`feast.feature_service`, `feast.feature_refs`, etc.), params (`feast.num_features`), and a description note showing feature service + project
+- **Artifacts**: `feast_lineage.html` (interactive graph), `feast_lineage.md` (Markdown summary), `feature_contract.json` (full schema snapshot for validation)
+- **Datasets**: `feast:fraud_feature_service (Training)` — logged automatically
+
+**Inference API** (http://localhost:9000):
+
+```bash
+curl -X POST http://localhost:9000/predict \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "user_001"}'
+```
+
+The model loads from MLflow with the FeatureContract auto-attached. Online features are fetched from Feast with the contract auto-validated. The app code has zero awareness of the integration — it's pure business logic.
 
 ## Quick Start
 
-### 1. Build the custom Feast image (one-time)
-
 ```bash
+# 1. Build the custom Feast image (includes UI with MLflow lineage nodes)
 cd feast-src
 docker buildx build -t feast-mlflow:dev -f Dockerfile.mlflow .
-```
 
-### 2. Install the MLflow plugin
-
-```bash
+# 2. Install the MLflow plugin
+cd ..
 pip install -e ".[demo]"
-```
 
-### 3. Run the full demo
-
-```bash
+# 3. Run the demo (starts 6 Docker services, trains model, runs full pipeline)
 cd demo
 bash scripts/demo.sh
 ```
 
-### 4. Explore
+## Architecture
 
-| URL | What |
-|-----|------|
-| http://localhost:8888 | **Feast UI** — lineage graph with MLflow training run nodes |
-| http://localhost:5000 | **MLflow UI** — runs with `feast_lineage.html`, contract, and notes |
+Six Docker services, one image:
 
-## What Makes This Different
+| Service | Port | Role |
+|---------|------|------|
+| **Registry Server** | 6570 | Stores Feast metadata (entities, feature views, feature services). gRPC. |
+| **Offline Server** | 8815 | Historical feature retrieval (training). Arrow Flight. |
+| **Online Server** | 6566 | Low-latency feature serving (inference). HTTP, backed by Redis. |
+| **Feast UI** | 8888 | Lineage graph, feature exploration. Queries MLflow for training runs. |
+| **Redis** | 6379 | Online feature store backend. |
+| **MLflow** | 5000 | Experiment tracking, model registry, artifact store. |
 
-| | Databricks FeatureEngineeringClient | This Integration |
-|---|---|---|
-| **Activation** | New client API: `fe.create_training_set()` | Config in `feature_store.yaml` or `autolog()` |
-| **Code changes** | Rewrite training and inference code | **Zero** — standard Feast + MLflow code |
-| **Architecture** | Single process | **Server/client** (production-ready) |
-| **Training** | Auto-logs features | Auto-logs features, contract, HTML lineage |
-| **Inference** | No validation | **Auto-validates** FeatureContract at serving time |
-| **Feast UI** | No MLflow lineage | **MLflow runs as nodes** in lineage graph |
-| **MLflow UI** | Manual tags only | **Auto: HTML graph, Markdown, contract, notes** |
-| **Portability** | Locked to Databricks | **Open source**, provider interface |
+Training scripts run on the host and talk to the Docker servers as a Feast client (`feature_store.yaml` with `type: remote`).
 
 ## How It Works
 
-### Training (automatic)
+### During Training
 
-1. Add `mlflow:` block to `feature_store.yaml`
-2. `get_historical_features()` auto-logs feature metadata, schema, and FeatureContract to the active MLflow run
-3. `log_model()` attaches deferred Feast context if the run started after the feature fetch
+```python
+# Standard code — no special imports or APIs beyond activating the bridge
+store = FeatureStore(repo_path="feast_repo")
+training_df = store.get_historical_features(entity_df, features=feature_service).to_df()
+#                    ↑ bridge intercepts: logs tags, params, schema to MLflow
 
-### Inference (automatic)
+with mlflow.start_run():
+    model = train(training_df)
+    mlflow.pytorch.log_model(model, "model")
+    #               ↑ bridge intercepts: logs FeatureContract, HTML lineage, Markdown
+```
 
-1. `mlflow.pytorch.load_model(uri)` — bridge auto-downloads FeatureContract and attaches it to the model
-2. `get_online_features()` — Feast natively validates the contract against the current registry
-3. **No validation code in app.py** — the inference app is pure business logic
+### During Inference
 
-### Feast UI lineage
+```python
+model = mlflow.pytorch.load_model(model_uri)
+#        ↑ bridge intercepts: downloads FeatureContract from run, attaches to model
 
-The Feast UI server (`ui_server.py`) queries MLflow for runs tagged with `feast.feature_service` and injects them as `TrainingRunMetadata` into the registry proto before serving it to the browser. The UI TypeScript was modified to render these as blue clickable nodes in the lineage graph.
+features = store.get_online_features(features=feature_service, entity_rows=[...])
+#           ↑ Feast intercepts: validates contract against current registry
+```
+
+### In the Feast UI
+
+The Feast UI server (`ui_server.py`) queries MLflow at startup for any runs tagged with `feast.feature_service`. It injects these as `TrainingRunMetadata` into the registry protobuf before serving it to the browser. The React UI (rebuilt from modified TypeScript) renders them as blue "MLflow Run" nodes in the lineage graph.
+
+### The Plugin Mechanism
+
+The `feast_mlflow` package works by **monkey-patching** — replacing function references in Python's memory at runtime. When you `import feast_mlflow`, it swaps `feast.FeatureStore.get_historical_features`, `mlflow.pytorch.log_model`, and `mlflow.pytorch.load_model` with thin wrappers that call the original function first, then log metadata. No MLflow or Feast source files are modified on disk.
+
+The Feast fork (`feast-patches/`) takes the native approach — the same logic is built directly into the Feast SDK, activated by a `mlflow:` config block. This is the code intended for upstream contribution.
 
 ## Project Structure
 
 ```
 mlflow-demo/
-├── feast-patches/           Feast fork patches (tracked in git)
+│
+├── feast_mlflow/              MLflow-side plugin (pip install, no fork needed)
+│   ├── bridge.py              Monkey-patches Feast + MLflow at runtime
+│   ├── artifacts.py           Generates HTML lineage, Markdown, run notes
+│   ├── contract.py            FeatureContract (training schema snapshot)
+│   ├── cli.py                 CLI: feast-mlflow validate / lineage
+│   ├── dataset.py             MLflow dataset integration
+│   ├── lineage.py             Bidirectional lineage tracker
+│   ├── config.py              Config from YAML / env vars
+│   └── providers/             Feature store provider interface
+│
+├── feast-patches/             Feast-side fork patches (for upstream PR)
+│   ├── Dockerfile.mlflow      Multi-stage: builds UI from source + overlays Python
 │   ├── sdk/python/feast/
-│   │   ├── repo_config.py            MlflowConfig (follows OpenLineage pattern)
-│   │   ├── feature_store.py          Hooks in get_historical/online_features
-│   │   ├── ui_server.py              Injects MLflow runs into registry for UI
-│   │   ├── mlflow_integration/       Emitter, contract, config
-│   │   ├── infra/registry/           Training run storage
-│   │   └── lineage/                  Extended with mlflowRun entity type
-│   ├── protos/                       TrainingRunMetadata proto
-│   ├── ui/src/                       MLflow run nodes in lineage graph
-│   └── Dockerfile.mlflow             Multi-stage build (UI from source + Python overlay)
+│   │   ├── repo_config.py     Adds MlflowConfig (follows OpenLineage pattern)
+│   │   ├── feature_store.py   Hooks in get_historical/online_features
+│   │   ├── ui_server.py       Injects MLflow runs into /registry endpoint
+│   │   ├── mlflow_integration/  Native emitter, contract, config
+│   │   ├── infra/registry/    Training run storage in file registry
+│   │   └── lineage/           mlflowRun entity type in lineage generator
+│   ├── protos/                TrainingRunMetadata proto message
+│   └── ui/src/                TypeScript: MLflow run nodes in lineage graph
 │
-├── feast_mlflow/              MLflow plugin package (pip-installable)
-│   ├── __init__.py            autolog(), enable(), disable()
-│   ├── bridge.py              Patch engine: intercepts Feast + MLflow calls
-│   ├── artifacts.py           HTML lineage graph, Markdown summary, run notes
-│   ├── contract.py            FeatureContract schema snapshot
-│   └── cli.py                 CLI: feast-mlflow validate / lineage
+├── demo/                      Fraud detection end-to-end demo
+│   ├── docker-compose.yml     6-service stack
+│   ├── feast_repo/            Client config (remote servers on localhost)
+│   ├── feast_repo_server/     Server config (local stores, host Redis)
+│   ├── feast_repo_docker/     Docker config (local stores, Docker Redis)
+│   ├── training/train.py      FraudNet training (standard Feast + MLflow)
+│   ├── inference/app.py       FastAPI serving (zero glue code)
+│   └── scripts/demo.sh        Full pipeline: infra → data → train → validate → serve
 │
-├── demo/                      Fraud detection demo
-│   ├── docker-compose.yml     6 services: registry, offline, online, Feast UI, Redis, MLflow
-│   ├── feast_repo/            Client config (points to remote servers)
-│   ├── feast_repo_server/     Server config (local stores, localhost Redis)
-│   ├── feast_repo_docker/     Docker config (local stores, docker Redis hostname)
-│   ├── training/train.py      Standard Feast + MLflow code (zero glue)
-│   ├── inference/app.py       FastAPI serving (zero glue — contract auto-validated)
-│   └── scripts/demo.sh        Full pipeline runner
-│
-├── tests/                     Plugin unit tests
-├── pyproject.toml
-└── .gitignore
+├── tests/                     Unit tests for the plugin
+├── pyproject.toml             Package metadata
+└── feast-src/                 Full Feast clone for Docker builds (gitignored)
 ```
 
-## Upstream Contribution Path
+## Comparison
 
-**Feast PR**: "Add native MLflow integration (following OpenLineage pattern)"
-- `MlflowConfig` on `RepoConfig` — same pattern as `OpenLineageConfig`
-- `FeastMlflowEmitter` — auto-logs at training, auto-validates at serving
-- `TrainingRunMetadata` proto — training runs in registry
-- `ui_server.py` — injects MLflow data into registry for lineage UI
-- UI TypeScript — MLflow runs as first-class graph nodes
+| | Databricks FeatureEngineeringClient | This Project |
+|---|---|---|
+| **Activation** | New API: `fe.create_training_set()` | Config block or `autolog()` |
+| **Code changes** | Rewrite training + inference | Zero |
+| **Training** | Auto-logs features | Auto-logs features + contract + HTML lineage |
+| **Inference** | No contract validation | Auto-validates FeatureContract |
+| **Feast UI** | N/A | MLflow runs in lineage graph |
+| **MLflow UI** | Manual tags | Auto: HTML graph, Markdown, contract, notes |
+| **Architecture** | Single process, Databricks only | Server/client, open source |
 
-**MLflow PR**: "Add Feast autologging integration"
-- `mlflow.feast.autolog()` — patches `get_historical_features` and `load_model`
-- Rich artifacts: HTML lineage, Markdown summary, FeatureContract JSON
-- No MLflow UI changes needed — uses existing artifact rendering
+## Upstream Path
+
+- **Feast PR**: native `mlflow:` config following the OpenLineage pattern, `FeastMlflowEmitter`, `TrainingRunMetadata` proto, UI lineage nodes
+- **MLflow PR**: `mlflow.feast.autolog()` integration module, rich artifacts, no UI changes needed
