@@ -1,7 +1,7 @@
 x-feast: &feast-defaults
   image: feast-mlflow:dev
   volumes:
-    - ./feast_repo_server:/feature_repo
+    - ./feast_repo_docker:/feature_repo
     - ./data:/data
   depends_on:
     redis:
@@ -29,6 +29,7 @@ services:
       --artifacts-destination /mlflow/artifacts
       --default-artifact-root mlflow-artifacts:/
       --serve-artifacts
+      --allowed-hosts *
     volumes:
       - mlflow-data:/mlflow
     depends_on:
@@ -60,17 +61,10 @@ services:
     <<: *feast-defaults
     container_name: feast-ui
     command: feast -c /feature_repo ui -h 0.0.0.0 -p 8888
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     ports:
       - "8888:8888"
-
-  lineage-ui:
-    image: python:3.11-slim
-    container_name: feast-lineage-ui
-    command: python -m http.server 9090 --directory /ui
-    volumes:
-      - ../feast-src/lineage_ui:/ui:ro
-    ports:
-      - "9090:9090"
 
 volumes:
   mlflow-data:

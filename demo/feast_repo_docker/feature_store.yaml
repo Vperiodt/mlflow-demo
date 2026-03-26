@@ -1,0 +1,18 @@
+project: fraud_detection
+registry: /feature_repo/data/registry.db
+provider: local
+
+offline_store:
+  type: dask
+
+online_store:
+  type: redis
+  connection_string: "redis:6379"
+
+entity_key_serialization_version: 3
+
+mlflow:
+  enabled: true
+  tracking_uri: http://mlflow:5000
+  auto_log: true
+  lineage: true

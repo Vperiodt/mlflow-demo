@@ -1,12 +1,47 @@
+# Stage 1: Build the Feast UI with our MLflow lineage modifications
+FROM node:18-slim AS ui-builder
+
+RUN npm install -g yalc
+
+WORKDIR /build
+
+# Copy protos (needed by UI proto generation step)
+COPY protos/ protos/
+
+# Copy the Feast UI library source (with our modifications)
+COPY ui/ ui/
+
+# Build the UI library
+WORKDIR /build/ui
+RUN npm install && npm run build:lib-dev
+
+# Copy the Feast UI wrapper app
+COPY sdk/python/feast/ui/ /build/feast-ui/
+WORKDIR /build/feast-ui
+
+# Link the locally-built library via yalc and build
+RUN cd /build/ui && yalc publish && \
+    cd /build/feast-ui && yalc add @feast-dev/feast-ui && \
+    npm install --legacy-peer-deps && \
+    npm install ajv --legacy-peer-deps && \
+    NODE_OPTIONS=--openssl-legacy-provider npm run build
+
+# Stage 2: Build the final Feast server image
 FROM python:3.11-slim
 
 RUN pip install --no-cache-dir \
     "feast[redis]>=0.35.0" \
     "mlflow>=2.10.0" \
     "uvicorn>=0.23.0" \
-    "fastapi>=0.100.0"
+    "fastapi>=0.100.0" \
+    "grpcio>=1.56.0" \
+    "grpcio-tools>=1.56.0" \
+    "grpcio-health-checking>=1.56.0" \
+    "grpcio-reflection>=1.56.0" \
+    "pyarrow>=12.0.0"
 
-# Overlay our modified source files on the installed Feast package
+# Overlay our modified Python source files
+COPY sdk/python/feast/ui_server.py /usr/local/lib/python3.11/site-packages/feast/ui_server.py
 COPY sdk/python/feast/repo_config.py /usr/local/lib/python3.11/site-packages/feast/repo_config.py
 COPY sdk/python/feast/feature_store.py /usr/local/lib/python3.11/site-packages/feast/feature_store.py
 COPY sdk/python/feast/offline_server.py /usr/local/lib/python3.11/site-packages/feast/offline_server.py
@@ -24,6 +59,10 @@ COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2_grpc.py /usr/loca
 
 # Copy our new mlflow_integration package
 COPY sdk/python/feast/mlflow_integration/ /usr/local/lib/python3.11/site-packages/feast/mlflow_integration/
+
+# Overlay the rebuilt Feast UI with MLflow lineage nodes
+COPY --from=ui-builder /build/feast-ui/build/ /usr/local/lib/python3.11/site-packages/feast/ui/build/
+RUN chmod -R g+w /usr/local/lib/python3.11/site-packages/feast/ui/build/
 
 # Copy the custom lineage page
 COPY lineage_ui/ /opt/feast-lineage-ui/

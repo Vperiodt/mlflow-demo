@@ -8,6 +8,7 @@ Run from demo/ directory:
     python training/train.py
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -28,7 +29,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from training.model import FraudNet
 
-FEAST_REPO = str(PROJECT_ROOT / "feast_repo")
+FEAST_REPO = os.environ.get("FEAST_REPO", str(PROJECT_ROOT / "feast_repo"))
 PARQUET_PATH = PROJECT_ROOT / "data" / "parquet" / "transactions.parquet"
 
 HIDDEN_DIM = 64
