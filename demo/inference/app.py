@@ -1,10 +1,8 @@
 """
 FastAPI inference app: FraudNet predicts using Feast online features.
 
-Zero glue code -- everything is automatic:
-- Model loaded from MLflow → bridge auto-attaches FeatureContract + feature metadata
-- Feast get_online_features → Feast natively validates the contract
-- No manual artifact downloads, no validation code, no special imports
+ZERO special imports. ZERO monkey-patching. Standard Feast + MLflow code.
+After loading the model, one Feast helper resolves the feature contract.
 
 Run from demo/ directory:
     uvicorn inference.app:app --port 9000
@@ -19,8 +17,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import feast_mlflow  # noqa: F401  -- activates bridge; patches load_model + get_online_features
-
 import mlflow
 import pandas as pd
 import torch
@@ -28,7 +24,7 @@ from feast import FeatureStore
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-FEAST_REPO = str(PROJECT_ROOT / "feast_repo")
+FEAST_REPO = os.environ.get("FEAST_REPO", str(PROJECT_ROOT / "feast_repo"))
 
 _state: dict = {}
 
@@ -78,15 +74,18 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("No runs in 'fraud-detection' experiment")
 
     run = runs[0]
-
-    # Standard MLflow load -- bridge auto-attaches FeatureContract + metadata
     model_uri = f"runs:/{run.info.run_id}/model"
+
+    # Standard MLflow model loading
     model = mlflow.pytorch.load_model(model_uri)
     model.eval()
 
-    # Feature metadata was auto-attached by the bridge's load_model hook
-    feature_service = getattr(model, "_feast_feature_service", "fraud_feature_service")
-    feature_cols = getattr(model, "_feast_feature_cols", [])
+    # One Feast helper call to get the feature contract
+    from feast.integrations.mlflow import load_feast_contract_for_model
+    contract = load_feast_contract_for_model(model_uri, tracking_uri=tracking_uri)
+
+    feature_service = contract["feature_service"]
+    feature_cols = sorted(f["name"] for f in contract["features"])
 
     store = FeatureStore(repo_path=FEAST_REPO)
 
@@ -96,11 +95,11 @@ async def lifespan(app: FastAPI):
     _state["feature_service"] = store.get_feature_service(feature_service)
     _state["feature_service_name"] = feature_service
     _state["feature_cols"] = feature_cols
+    _state["contract"] = contract
 
-    contract = getattr(model, "_feast_contract", None)
     print(f"Model loaded: run {run.info.run_id}")
     print(f"Feature service: {feature_service} ({len(feature_cols)} features)")
-    print(f"FeatureContract: {'attached' if contract else 'not found'}")
+    print(f"FeatureContract: attached ({len(contract['features'])} features)")
 
     yield
     _state.clear()
@@ -108,20 +107,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Fraud Detection API",
-    description="Standard Feast + MLflow code. All integration is automatic.",
+    description="Standard Feast + MLflow code. One Feast helper for contract loading.",
     lifespan=lifespan,
 )
 
 
 @app.get("/health")
 async def health():
-    model = _state.get("model")
-    contract = getattr(model, "_feast_contract", None) if model else None
     return {
         "status": "ok",
         "run_id": _state.get("run_id"),
         "feature_service": _state.get("feature_service_name"),
-        "contract_attached": contract is not None,
+        "contract_attached": _state.get("contract") is not None,
     }
 
 
@@ -131,7 +128,6 @@ async def predict(request: PredictRequest):
     feature_service = _state["feature_service"]
     model = _state["model"]
 
-    # Standard Feast online fetch -- Feast natively validates the contract
     try:
         online_features = store.get_online_features(
             features=feature_service,

@@ -189,7 +189,6 @@ class FeatureStore:
         self._registry = None
         self._provider = None
         self._openlineage_emitter = None
-        self._mlflow_emitter = None
 
         # Initialize feature service cache for performance optimization
         self._feature_service_cache = {}
@@ -289,33 +288,6 @@ class FeatureStore:
         if self._openlineage_emitter is None:
             self._openlineage_emitter = self._init_openlineage_emitter()
         return self._openlineage_emitter
-
-    def _init_mlflow_emitter(self) -> Optional[Any]:
-        """Initialize MLflow emitter if configured and enabled."""
-        try:
-            if (
-                hasattr(self.config, "mlflow")
-                and self.config.mlflow is not None
-                and self.config.mlflow.enabled
-            ):
-                from feast.mlflow_integration import FeastMlflowEmitter
-
-                ml_config = self.config.mlflow.to_mlflow_config()
-                emitter = FeastMlflowEmitter(ml_config)
-                if emitter.is_enabled:
-                    return emitter
-        except ImportError:
-            pass
-        except Exception as e:
-            warnings.warn(f"Failed to initialize MLflow emitter: {e}")
-        return None
-
-    @property
-    def mlflow_emitter(self) -> Optional[Any]:
-        """Gets the MLflow emitter of this feature store."""
-        if self._mlflow_emitter is None:
-            self._mlflow_emitter = self._init_mlflow_emitter()
-        return self._mlflow_emitter
 
     def _clear_feature_service_cache(self):
         """Clear feature service cache to avoid stale data after registry refresh."""
@@ -1457,12 +1429,20 @@ class FeatureStore:
         feature_views: list,
         feature_refs: List[str],
     ) -> None:
-        """Auto-log Feast metadata to MLflow after historical feature retrieval."""
-        emitter = self.mlflow_emitter
-        if emitter is None:
+        """Auto-log Feast metadata to MLflow after historical feature retrieval.
+
+        Uses only standard MLflow APIs (set_tag, log_param, log_artifact, log_input).
+        No monkey-patching. No import tricks. Pure Feast code calling public MLflow APIs.
+        """
+        mlflow_cfg = getattr(self.config, "mlflow", None)
+        if mlflow_cfg is None or not getattr(mlflow_cfg, "enabled", False):
+            return
+        if not getattr(mlflow_cfg, "auto_log", True):
             return
 
         try:
+            from feast.integrations.mlflow_autolog import auto_log_historical_features
+
             fs_name = ""
             if isinstance(features_input, FeatureService):
                 fs_name = features_input.name
@@ -1480,16 +1460,19 @@ class FeatureStore:
                     if src_name and src_name not in data_sources:
                         data_sources.append(str(src_name))
 
-            emitter.emit_historical_features(
+            auto_log_historical_features(
                 feature_service_name=fs_name,
                 project=self.project,
                 feature_refs=feature_refs,
                 feature_views=feature_views,
                 entity_keys=sorted(set(entity_keys)),
                 data_sources=data_sources,
+                tracking_uri=getattr(mlflow_cfg, "tracking_uri", ""),
             )
+        except ImportError:
+            pass
         except Exception as e:
-            warnings.warn(f"MLflow integration: {e}")
+            warnings.warn(f"Feast MLflow auto-logging: {e}")
 
     def create_saved_dataset(
         self,
@@ -2607,8 +2590,6 @@ class FeatureStore:
         """
         provider = self._get_provider()
 
-        self._validate_mlflow_contract_online(features)
-
         response = provider.get_online_features(
             config=self.config,
             features=features,
@@ -2619,26 +2600,6 @@ class FeatureStore:
         )
 
         return response
-
-    def _validate_mlflow_contract_online(self, features: Any) -> None:
-        """Auto-validate FeatureContract before online serving (no user code needed)."""
-        emitter = self.mlflow_emitter
-        if emitter is None:
-            return
-        try:
-            fs_name = ""
-            if isinstance(features, FeatureService):
-                fs_name = features.name
-            elif isinstance(features, str):
-                fs_name = features
-            if fs_name:
-                emitter.validate_online_features(
-                    feature_service_name=fs_name,
-                    project=self.project,
-                    registry=self.registry,
-                )
-        except Exception:
-            pass
 
     async def get_online_features_async(
         self,

@@ -57,8 +57,8 @@ COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2.py /usr/local/lib
 COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2.pyi /usr/local/lib/python3.11/site-packages/feast/protos/feast/registry/RegistryServer_pb2.pyi
 COPY sdk/python/feast/protos/feast/registry/RegistryServer_pb2_grpc.py /usr/local/lib/python3.11/site-packages/feast/protos/feast/registry/RegistryServer_pb2_grpc.py
 
-# Copy our new mlflow_integration package
-COPY sdk/python/feast/mlflow_integration/ /usr/local/lib/python3.11/site-packages/feast/mlflow_integration/
+# Copy our new integrations package
+COPY sdk/python/feast/integrations/ /usr/local/lib/python3.11/site-packages/feast/integrations/
 
 # Overlay the rebuilt Feast UI with MLflow lineage nodes
 COPY --from=ui-builder /build/feast-ui/build/ /usr/local/lib/python3.11/site-packages/feast/ui/build/

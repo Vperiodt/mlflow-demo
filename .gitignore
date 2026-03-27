@@ -30,3 +30,7 @@ Thumbs.db
 
 # Exclude the full Feast clone -- only tracked files live in feast-patches/
 feast-src/
+
+# Brain repo
+.brain/
+engineer-brain/

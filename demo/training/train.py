@@ -1,8 +1,9 @@
 """
 Train FraudNet on Feast features.
 
-The feast-mlflow bridge is activated by the `mlflow:` block in
-feature_store.yaml -- no special imports or glue code needed.
+ZERO special imports. ZERO glue code. The ``mlflow:`` block in
+feature_store.yaml tells Feast to auto-log everything to MLflow.
+This is standard Feast + standard MLflow code.
 
 Run from demo/ directory:
     python training/train.py
@@ -15,8 +16,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-
-import feast_mlflow  # noqa: F401  -- importing activates the bridge via env/config
 
 import mlflow
 import pandas as pd

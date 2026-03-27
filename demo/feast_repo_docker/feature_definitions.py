@@ -8,7 +8,7 @@ from feast.field import Field
 from feast.types import Float64, Int64, String
 from feast.value_type import ValueType
 
-TRANSACTIONS_PARQUET = "../data/parquet/transactions.parquet"
+TRANSACTIONS_PARQUET = "/data/parquet/transactions.parquet"
 
 user = Entity(
     name="user",
