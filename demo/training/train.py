@@ -1,9 +1,8 @@
 """
 Train FraudNet on Feast features.
 
-ZERO special imports. ZERO glue code. The ``mlflow:`` block in
-feature_store.yaml tells Feast to auto-log everything to MLflow.
-This is standard Feast + standard MLflow code.
+Uses Feast's MLflow integration helpers (Stage 1) to log feature metadata.
+Standard Feast + MLflow code with one helper call.
 
 Run from demo/ directory:
     python training/train.py
@@ -11,6 +10,7 @@ Run from demo/ directory:
 
 import os
 import sys
+import time
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -52,7 +52,6 @@ def prepare_xy(df: pd.DataFrame):
 
 
 def main():
-    # --- Standard Feast code (no glue) ---
     store = FeatureStore(repo_path=FEAST_REPO)
     feature_service = store.get_feature_service("fraud_feature_service")
 
@@ -60,11 +59,12 @@ def main():
     entity_df = raw[["user_id", "event_timestamp"]].drop_duplicates()
     entity_df["event_timestamp"] = pd.to_datetime(entity_df["event_timestamp"])
 
+    start_time = time.time()
     training_df = store.get_historical_features(
         entity_df=entity_df,
         features=feature_service,
     ).to_df()
-    # ^^^ The bridge auto-logs all Feast metadata to MLflow here ^^^
+    retrieval_duration = time.time() - start_time
 
     labels = raw[["user_id", "event_timestamp", "is_fraud"]].drop_duplicates()
     training_df["event_timestamp"] = pd.to_datetime(training_df["event_timestamp"], utc=True)
@@ -78,7 +78,6 @@ def main():
     )
     train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=BATCH_SIZE, shuffle=True)
 
-    # --- Standard MLflow code (no glue) ---
     mlflow.set_experiment("fraud-detection")
     with mlflow.start_run():
         mlflow.log_params({
@@ -88,6 +87,40 @@ def main():
             "epochs": EPOCHS,
             "batch_size": BATCH_SIZE,
         })
+
+        # --- Feast Stage 1: log feature metadata to MLflow ---
+        try:
+            from feast.integrations.mlflow_autolog import auto_log_historical_features
+
+            feature_refs = []
+            entity_keys = []
+            data_sources = []
+            for proj in feature_service.feature_view_projections:
+                fv = store.get_feature_view(proj.name)
+                for feat in proj.features:
+                    feature_refs.append(f"{proj.name}__{feat.name}")
+                entity_keys.extend(fv.entities)
+                src = fv.batch_source
+                src_name = getattr(src, "name", None) or getattr(src, "path", None)
+                if src_name:
+                    data_sources.append(str(src_name))
+
+            auto_log_historical_features(
+                feature_service_name=feature_service.name,
+                project=store.project,
+                feature_refs=feature_refs,
+                feature_views=[store.get_feature_view(p.name) for p in feature_service.feature_view_projections],
+                entity_keys=sorted(set(entity_keys)),
+                data_sources=list(dict.fromkeys(data_sources)),
+                duration_seconds=retrieval_duration,
+                entity_count=len(entity_df),
+                tracking_uri=os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"),
+            )
+            print(f"  Feast metadata logged to MLflow")
+        except ImportError:
+            print(f"  Note: feast.integrations.mlflow_autolog not available, skipping auto-logging")
+        except Exception as e:
+            print(f"  Warning: Could not log Feast metadata: {e}")
 
         model = FraudNet(input_dim=X.shape[1], hidden_dim=HIDDEN_DIM)
         optimizer = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
@@ -119,7 +152,6 @@ def main():
             })
 
         mlflow.pytorch.log_model(model, "model")
-        # ^^^ The bridge auto-attaches FeatureContract to the model here ^^^
 
         print(f"Training complete. Run ID: {mlflow.active_run().info.run_id}")
 
