@@ -2,26 +2,49 @@
 
 import sys
 import types
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-# Create a mock feast.integrations module structure so we can import without full Feast
 @pytest.fixture(autouse=True)
 def mock_feast_modules():
-    """Mock Feast modules so integrations/mlflow.py can be imported standalone."""
+    """Load integrations from feast-src; stub top-level feast.FeatureStore only."""
+    repo_root = Path(__file__).resolve().parent.parent
+    sdk_python = repo_root / "feast-src" / "sdk" / "python"
+    if not sdk_python.is_dir():
+        pytest.skip("feast-src/sdk/python missing — clone Feast into feast-src to run these tests")
+
+    for name in (
+        "feast.integrations.mlflow",
+        "feast.integrations.mlflow_autolog",
+        "feast.integrations",
+        "feast",
+    ):
+        sys.modules.pop(name, None)
+
     feast_mod = types.ModuleType("feast")
     feast_mod.FeatureStore = MagicMock
-    integrations_mod = types.ModuleType("feast.integrations")
+    feast_mod.__path__ = [str(sdk_python / "feast")]
+    sys.modules["feast"] = feast_mod
 
-    sys.modules.setdefault("feast", feast_mod)
-    sys.modules.setdefault("feast.integrations", integrations_mod)
-
-    # Import the actual module under test from feast-src
-    sys.path.insert(0, "feast-src/sdk/python")
-    yield
-    sys.path.pop(0)
+    path_str = str(sdk_python)
+    sys.path.insert(0, path_str)
+    try:
+        yield
+    finally:
+        try:
+            sys.path.remove(path_str)
+        except ValueError:
+            pass
+        for name in (
+            "feast.integrations.mlflow",
+            "feast.integrations.mlflow_autolog",
+            "feast.integrations",
+            "feast",
+        ):
+            sys.modules.pop(name, None)
 
 
 class TestLogFeatureRetrievalToMlflow:

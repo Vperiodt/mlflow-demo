@@ -13,13 +13,12 @@ mlflow:
   auto_log: true
 ```
 
-Then write standard Feast + MLflow code. Feast handles the rest:
+Configure `mlflow:` in `feature_store.yaml`, then use standard Feast APIs plus explicit Stage-1 helpers (no separate `feast_mlflow` package in this repo):
 
 ```python
-# Training — zero extra code
-store = FeatureStore(repo_path="feast_repo")
-df = store.get_historical_features(entity_df, features=fs).to_df()
-# ^ auto-logs to MLflow: tags, params, feature_contract.json, lineage HTML
+# Training — call Feast's autolog helper inside an active MLflow run
+from feast.integrations.mlflow_autolog import auto_log_historical_features
+# after get_historical_features(...): auto_log_historical_features(...)
 
 # Inference — one helper call
 from feast.integrations.mlflow import load_feast_contract_for_model
