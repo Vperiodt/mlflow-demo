@@ -1,28 +1,12 @@
 """
-feast-mlflow: Invisible bridge between feature stores and experiment tracking.
+feast_mlflow: Stage 2 MLflow PR — convenience helpers for Feast integration.
 
-Activation modes (pick one):
-    1. Config: add ``mlflow:`` block to ``feature_store.yaml``
-    2. Env var: ``FEAST_MLFLOW=1``
-    3. Explicit: ``feast_mlflow.autolog()``  (MLflow-style API)
-    4. Explicit: ``feast_mlflow.enable()``
+These helpers would live in mlflow/integrations/feast/ if accepted upstream.
+They use only standard Feast APIs and work with stock pip-installed Feast.
+
+- feast_tags.py:  set_feast_tags, log_model_with_feast_context
+- evaluation.py:  evaluate_with_feast
+- tracing.py:     traced_get_online_features, feast_span
 """
 
-from feast_mlflow.bridge import enable, disable, is_active
-
 __version__ = "0.1.0"
-__all__ = ["autolog", "enable", "disable", "is_active"]
-
-
-def autolog() -> None:
-    """MLflow-style autologging entry point.
-
-    Patches Feast's ``get_historical_features`` and MLflow's ``log_model``
-    so that feature metadata flows automatically into experiment tracking.
-
-    Usage::
-
-        import feast_mlflow
-        feast_mlflow.autolog()  # one-liner, MLflow convention
-    """
-    enable()
