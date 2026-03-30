@@ -2,7 +2,8 @@
 FastAPI inference app: FraudNet predicts using Feast online features.
 
 ZERO special imports. ZERO monkey-patching. Standard Feast + MLflow code.
-After loading the model, one Feast helper resolves the feature contract.
+After loading the model, one Feast helper resolves the feature contract
+and validates that serving features match training features (skew prevention).
 
 Run from demo/ directory:
     uvicorn inference.app:app --port 9000
@@ -10,6 +11,7 @@ Run from demo/ directory:
 
 import os
 import sys
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -40,6 +42,8 @@ class PredictResponse(BaseModel):
     features: dict = {}
     run_id: str
     feature_service: str
+    feast_retrieval_ms: float = 0.0
+    model_inference_ms: float = 0.0
 
 
 def _features_to_tensor(features: dict, feature_cols: list[str]) -> torch.Tensor:
@@ -88,11 +92,30 @@ async def lifespan(app: FastAPI):
     feature_cols = sorted(f["name"] for f in contract["features"])
 
     store = FeatureStore(repo_path=FEAST_REPO)
+    fs_obj = store.get_feature_service(feature_service)
+
+    # Skew prevention: validate that the feature service in Feast registry
+    # still has the same features the model was trained on
+    registry_features = set()
+    for proj in fs_obj.feature_view_projections:
+        for feat in proj.features:
+            registry_features.add(feat.name)
+    contract_features = set(f["name"] for f in contract["features"])
+    if registry_features != contract_features:
+        missing = contract_features - registry_features
+        extra = registry_features - contract_features
+        print(f"WARNING: Training/serving skew detected!")
+        if missing:
+            print(f"  Features in contract but not in registry: {missing}")
+        if extra:
+            print(f"  Features in registry but not in contract: {extra}")
+    else:
+        print(f"Skew check passed: {len(registry_features)} features match contract")
 
     _state["model"] = model
     _state["run_id"] = run.info.run_id
     _state["store"] = store
-    _state["feature_service"] = store.get_feature_service(feature_service)
+    _state["feature_service"] = fs_obj
     _state["feature_service_name"] = feature_service
     _state["feature_cols"] = feature_cols
     _state["contract"] = contract
@@ -128,6 +151,7 @@ async def predict(request: PredictRequest):
     feature_service = _state["feature_service"]
     model = _state["model"]
 
+    t0 = time.time()
     try:
         online_features = store.get_online_features(
             features=feature_service,
@@ -135,14 +159,17 @@ async def predict(request: PredictRequest):
         ).to_dict()
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Feast/Redis unavailable: {e}")
+    feast_ms = round((time.time() - t0) * 1000, 2)
 
     features = {k: v[0] for k, v in online_features.items() if k != "user_id"}
     if all(v is None for v in features.values()):
         raise HTTPException(status_code=404, detail=f"No online features for {request.user_id}")
 
+    t1 = time.time()
     tensor = _features_to_tensor(features, _state["feature_cols"])
     with torch.no_grad():
         probability = model(tensor).squeeze().item()
+    model_ms = round((time.time() - t1) * 1000, 2)
 
     serialized = {k: v.item() if hasattr(v, "item") else v for k, v in features.items()}
 
@@ -153,4 +180,6 @@ async def predict(request: PredictRequest):
         features=serialized,
         run_id=_state["run_id"],
         feature_service=_state["feature_service_name"],
+        feast_retrieval_ms=feast_ms,
+        model_inference_ms=model_ms,
     )

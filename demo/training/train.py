@@ -115,6 +115,8 @@ def main():
                 duration_seconds=retrieval_duration,
                 entity_count=len(entity_df),
                 tracking_uri=os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000"),
+                entity_df=entity_df,
+                training_df=training_df,
             )
             print(f"  Feast metadata logged to MLflow")
         except ImportError:
@@ -152,6 +154,7 @@ def main():
             })
 
         mlflow.pytorch.log_model(model, "model")
+        mlflow.set_tag("feast.feature_service", feature_service.name)
 
         print(f"Training complete. Run ID: {mlflow.active_run().info.run_id}")
 

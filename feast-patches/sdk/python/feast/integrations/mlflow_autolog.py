@@ -49,19 +49,22 @@ def auto_log_historical_features(
     duration_seconds: float = 0.0,
     entity_count: int = 0,
     tracking_uri: str = "",
+    entity_df: Any = None,
+    training_df: Any = None,
 ) -> None:
     """Auto-log everything to the active MLflow run after get_historical_features.
 
     Called internally by FeatureStore. Logs:
     - Tags: feast.feature_service, feast.feature_refs, feast.entity_keys, etc.
-    - Params: feast.feature_service, feast.num_features, feast.num_entities
+    - Params: feast.feature_service, feast.num_features, feast.num_entities, feast.feature_refs
     - Metric: feast.retrieval_duration_sec
     - Artifact: feature_contract.json (schema snapshot)
+    - Artifact: entity_df.parquet (for reproducibility)
     - Artifact: feast_lineage.html (interactive graph)
     - Artifact: feast_lineage.md (Markdown summary)
     - Artifact: feast/schema.json (feature schema)
     - Tag: mlflow.note.content (run description with Feast context)
-    - Dataset: feast:{feature_service_name} via mlflow.log_input()
+    - Dataset: feast:{feature_service_name} via mlflow.log_input() with actual training data
     """
     if not _is_mlflow_available():
         return
@@ -90,11 +93,13 @@ def auto_log_historical_features(
 
     # --- Params ---
     try:
+        refs_str = ",".join(feature_refs)
         mlflow.log_params({
             "feast.feature_service": feature_service_name,
             "feast.num_features": len(feature_refs),
             "feast.num_entities": len(entity_keys),
             "feast.entity_count": entity_count,
+            "feast.feature_refs": refs_str[:500],
         })
     except Exception:
         logger.debug("Could not log Feast params", exc_info=True)
@@ -123,6 +128,17 @@ def auto_log_historical_features(
             mlflow.log_artifact(str(path))
     except Exception:
         logger.debug("Could not log FeatureContract", exc_info=True)
+
+    # --- Entity DataFrame artifact (enables reproducibility) ---
+    if entity_df is not None:
+        try:
+            import pandas as pd
+            with tempfile.TemporaryDirectory() as tmpdir:
+                path = Path(tmpdir) / "entity_df.parquet"
+                entity_df.to_parquet(str(path), index=False)
+                mlflow.log_artifact(str(path))
+        except Exception:
+            logger.debug("Could not log entity_df artifact", exc_info=True)
 
     # --- HTML lineage artifact ---
     try:
@@ -188,12 +204,15 @@ def auto_log_historical_features(
     except Exception:
         pass
 
-    # --- Dataset logging ---
+    # --- Dataset logging (actual training data when available) ---
     try:
         from mlflow.data.pandas_dataset import from_pandas
         import pandas as pd
-        meta_df = pd.DataFrame({"feature_ref": feature_refs})
-        dataset = from_pandas(meta_df, name=f"feast:{feature_service_name}")
+        if training_df is not None:
+            dataset = from_pandas(training_df, name=f"feast:{feature_service_name}")
+        else:
+            meta_df = pd.DataFrame({"feature_ref": feature_refs})
+            dataset = from_pandas(meta_df, name=f"feast:{feature_service_name}")
         mlflow.log_input(dataset, context="training")
     except Exception:
         logger.debug("Could not log MLflow dataset", exc_info=True)
