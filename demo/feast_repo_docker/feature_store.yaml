@@ -1,3 +1,4 @@
+# Used INSIDE Docker containers (apply, materialize, serve). Uses Docker DNS hostnames.
 project: fraud_detection
 registry: /feature_repo/data/registry.db
 provider: local

@@ -1,3 +1,4 @@
+# Used by LOCAL machine (train.py, app.py). Talks to Feast servers via localhost ports.
 project: fraud_detection
 provider: local
 
