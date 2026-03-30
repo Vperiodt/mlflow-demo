@@ -18,6 +18,26 @@ if [ -z "$PYTHON" ]; then
   exit 1
 fi
 
+REPO_ROOT="$(dirname "$DEMO_DIR")"
+PATCHES="$REPO_ROOT/feast-patches/sdk/python/feast"
+FEAST_PKG="$("$PYTHON" -c "import feast, pathlib; print(pathlib.Path(feast.__file__).parent)")"
+if [ -d "$PATCHES" ] && [ -d "$FEAST_PKG" ]; then
+  echo "Installing feast-patches into $(basename "$(dirname "$FEAST_PKG")")/feast ..."
+  cp -r "$PATCHES"/integrations "$FEAST_PKG"/
+  for f in "$PATCHES"/*.py; do
+    [ -f "$f" ] && cp "$f" "$FEAST_PKG"/
+  done
+  for sub in infra/registry lineage protos/feast/registry protos/feast/core; do
+    if [ -d "$PATCHES/$sub" ]; then
+      mkdir -p "$FEAST_PKG/$sub"
+      cp "$PATCHES/$sub"/*.py "$FEAST_PKG/$sub"/ 2>/dev/null || true
+    fi
+  done
+  echo "  Done — patched modules installed."
+else
+  echo "WARNING: feast-patches or installed feast not found. Some capabilities may fail." >&2
+fi
+
 echo "========================================================"
 echo "  Feast + MLflow Native Integration Demo"
 echo "  Server/Client Architecture"
@@ -105,8 +125,7 @@ PYEOF
 echo ""
 echo "--- Cap 2: Reproducibility ---"
 "$PYTHON" << PYEOF
-import mlflow, os, sys
-sys.path.insert(0, "../feast-src/sdk/python")
+import mlflow, os
 mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
 
 from feast.integrations.mlflow import get_entity_df_from_mlflow_run, resolve_feature_service_from_model_uri
@@ -125,8 +144,7 @@ PYEOF
 echo ""
 echo "--- Cap 3: Training/Serving Skew Prevention ---"
 "$PYTHON" << PYEOF
-import mlflow, json, os, sys
-sys.path.insert(0, "../feast-src/sdk/python")
+import mlflow, json, os
 mlflow.set_tracking_uri(os.environ["MLFLOW_TRACKING_URI"])
 
 from feast.integrations.mlflow import load_feast_contract_for_model

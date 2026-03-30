@@ -154,6 +154,7 @@ def main():
             })
 
         mlflow.pytorch.log_model(model, "model")
+        # review
         mlflow.set_tag("feast.feature_service", feature_service.name)
 
         print(f"Training complete. Run ID: {mlflow.active_run().info.run_id}")
